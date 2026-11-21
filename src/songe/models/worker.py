@@ -1,8 +1,34 @@
 """Entrypoint run only under the artifact memory guard."""
 
 import argparse
+import json
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+from tempfile import TemporaryDirectory
+
+
+@contextmanager
+def mlx_input(source, scratch):
+    try:
+        config = json.loads((source / "config.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        config = {}
+    if config.get("model_type") != "qwen3_5_text":
+        yield source
+        return
+
+    # Transformers dequantizes Qwen3.5 GGUF to its text-only model type.
+    # The MLX loader accepts the flat text config and weights under qwen3_5.
+    # Keep the original Transformers checkpoint usable as-is.
+    with TemporaryDirectory(prefix="mlx-input-", dir=scratch) as temporary:
+        prepared = Path(temporary)
+        config["model_type"] = "qwen3_5"
+        (prepared / "config.json").write_text(json.dumps(config), encoding="utf-8")
+        for entry in source.iterdir():
+            if entry.name != "config.json":
+                (prepared / entry.name).symlink_to(entry.resolve())
+        yield prepared
 
 
 def convert(kind, source, destination):
@@ -12,7 +38,8 @@ def convert(kind, source, destination):
         from mlx_lm.convert import convert as mlx_convert
 
         output = destination / "model"  # mlx-lm requires a nonexistent output path.
-        mlx_convert(hf_path=str(source), mlx_path=str(output), dtype="bfloat16")
+        with mlx_input(source, destination) as prepared:
+            mlx_convert(hf_path=str(prepared), mlx_path=str(output), dtype="bfloat16")
         for file in output.iterdir():
             file.rename(destination / file.name)
         output.rmdir()
