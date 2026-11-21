@@ -135,15 +135,22 @@ async def test_the_proxy_adds_the_sessions_lessons_to_the_system_prompt(
         )
         await client.post(
             "/v1/chat/completions",
-            json=chat("commit this" if session_header else "a new task"),
+            json=chat("commit this"),
             headers=next_session,
+        )
+        await client.post(
+            "/v1/chat/completions", json=chat("a new task"), headers=next_session
         )
     await upstream.aclose()
     system = [json.loads(r.content)["messages"][0]["content"] for r in seen]
     assert system[0].startswith("You are an agent.\n\n" + quick.BLOCK)
     assert "Conventional Commits" in system[0] and "README" not in system[0]
     assert system[1] == system[0]  # the session keeps its lessons
-    assert "README" in system[2]  # the next session gets the new ones
+    if session_header == "x-session-affinity":
+        assert "README" in system[2]  # Pi identifies a genuinely new session.
+    else:
+        assert system[2] == system[0]  # A generic request ID cannot change the pin.
+    assert "README" in system[3]
     # What Songe records is the agent's own request.
     assert store.exchanges()[0]["request"]["messages"][0]["content"] == "You are an agent."
 

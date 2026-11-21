@@ -467,11 +467,11 @@ def create_app(config=None, store=None, client=None, scheduler=None):
                 if request.url.path == "/v1/chat/completions" and learner is not None:
                     # Quick Dream: the session's lessons in the system message.
                     # The recorded request stays the agent's own (original).
-                    session_id = request.headers.get(
-                        "x-session-affinity"
-                    ) or request.headers.get("x-session-id")
                     text = await asyncio.to_thread(
-                        lesson_pins.block_for, learner, mapped.get("messages"), session_id
+                        lesson_pins.block_for,
+                        learner,
+                        mapped.get("messages"),
+                        request.headers.get("x-session-affinity"),
                     )
                     if text:
                         mapped["messages"] = with_lessons(mapped["messages"], text)
