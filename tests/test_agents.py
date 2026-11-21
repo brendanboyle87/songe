@@ -42,6 +42,35 @@ def test_user_changes_are_preserved_on_restore(tmp_path, config):
     assert "new changes" in path.read_text(encoding="utf-8")
 
 
+def test_pi_defaults_session_affinity_for_songe_models(config):
+    from songe.agents.pi import configure
+
+    new_model = configure({}, config)["providers"]["songe"]["models"][0]
+    assert new_model["compat"]["sendSessionAffinityHeaders"] is True
+
+    config_data = {
+        "providers": {
+            "songe": {
+                "models": [
+                    {"id": config.public_model, "compat": {"supportsStore": False}},
+                    {"id": "user-model"},
+                ]
+            }
+        }
+    }
+    managed, other = configure(config_data, config)["providers"]["songe"]["models"]
+    assert managed["compat"] == {
+        "supportsStore": False,
+        "sendSessionAffinityHeaders": True,
+    }
+    assert other == {"id": "user-model"}
+    config_data["providers"]["songe"]["models"][0]["compat"][
+        "sendSessionAffinityHeaders"
+    ] = False
+    managed = configure(config_data, config)["providers"]["songe"]["models"][0]
+    assert managed["compat"]["sendSessionAffinityHeaders"] is False
+
+
 def test_restore_never_leaves_the_agent_on_a_songe_model(tmp_path, config):
     import json
 

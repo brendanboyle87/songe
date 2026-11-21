@@ -56,8 +56,8 @@ class LessonPins:
     The lessons go at the end of the system message. A Quick Dream that
     changes them mid-session would change the prompt's prefix and make the
     server process the whole conversation again, so a session keeps the
-    lessons it started with; the next session gets the new ones. A session
-    is known by its system prompt and first user message."""
+    lessons it started with; the next session gets the new ones. Use the
+    client's session ID when supplied and the opening messages otherwise."""
 
     def __init__(self, size=2048):
         from collections import OrderedDict
@@ -65,20 +65,23 @@ class LessonPins:
         self.size, self.pins = size, OrderedDict()
 
     @staticmethod
-    def key(learner, messages):
+    def key(learner, messages, session_id):
         from .steps import digest
+
+        if session_id:
+            return digest([learner.model_key, session_id])
 
         def first(role):
             return next((m.get("content") for m in messages if m.get("role") == role), None)
 
         return digest([learner.model_key, first("system"), first("user")])
 
-    def block_for(self, learner, messages):
+    def block_for(self, learner, messages, session_id=None):
         from . import quick
 
         if not isinstance(messages, list) or not messages:
             return ""
-        key = self.key(learner, messages)
+        key = self.key(learner, messages, session_id)
         if key in self.pins:
             self.pins.move_to_end(key)
             return self.pins[key]
@@ -464,8 +467,11 @@ def create_app(config=None, store=None, client=None, scheduler=None):
                 if request.url.path == "/v1/chat/completions" and learner is not None:
                     # Quick Dream: the session's lessons in the system message.
                     # The recorded request stays the agent's own (original).
+                    session_id = request.headers.get(
+                        "x-session-affinity"
+                    ) or request.headers.get("x-session-id")
                     text = await asyncio.to_thread(
-                        lesson_pins.block_for, learner, mapped.get("messages")
+                        lesson_pins.block_for, learner, mapped.get("messages"), session_id
                     )
                     if text:
                         mapped["messages"] = with_lessons(mapped["messages"], text)
