@@ -22,6 +22,30 @@ def _validate_adapter(adapter):
     return adapter
 
 
+def _lora_base(base, staging):
+    try:
+        config = json.loads((base / "config.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return base
+    if (
+        not isinstance(config, dict)
+        or config.get("model_type") not in ("qwen3_5", "qwen3_5_text")
+        or config.get("architectures") != ["Qwen3_5ForCausalLM"]
+        or "text_config" in config
+        or config.get("mtp_num_hidden_layers", 0) != 0
+    ):
+        return base
+
+    # The pinned converter expects MTP layers for Qwen3_5ForCausalLM.
+    # LoRA export only needs the base config. Select the text-only converter
+    # without rewriting the original checkpoint or its cache.
+    prepared = staging / "base"
+    prepared.mkdir()
+    config["architectures"] = ["Qwen3_5TextModel"]
+    (prepared / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    return prepared
+
+
 def merge(base, adapter, destination, platform, *, runner=guarded_run):
     """Merge into a new dense bf16 model; the original base is never modified."""
     from ..models.convert import require_disk
@@ -131,7 +155,7 @@ def export(
                         interpreter_for(platform, runner),
                         str(tools.convert_lora),
                         "--base",
-                        str(base),
+                        str(_lora_base(base, staging)),
                         "--outtype",
                         "bf16",
                         "--outfile",

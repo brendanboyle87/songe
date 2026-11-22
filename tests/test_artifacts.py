@@ -236,6 +236,63 @@ def test_exports_preserve_quantization_and_stage_before_publishing(
     assert not list(tmp_path.glob(".export-*"))
 
 
+@pytest.mark.parametrize(
+    ("model_type", "extra", "expected_architecture"),
+    [
+        ("qwen3_5", {}, "Qwen3_5TextModel"),
+        ("qwen3_5_text", {}, "Qwen3_5TextModel"),
+        ("qwen3_5", {"mtp_num_hidden_layers": 1}, "Qwen3_5ForCausalLM"),
+        ("qwen3_5", {"text_config": {"hidden_size": 64}}, "Qwen3_5ForCausalLM"),
+    ],
+)
+def test_lora_export_uses_text_only_qwen35_config(
+    tmp_path, writable_file_fsync, model_type, extra, expected_architecture
+):
+    base, adapter = tmp_path / "base", tmp_path / "adapter"
+    base.mkdir()
+    adapter.mkdir()
+    original = {
+        "model_type": model_type,
+        "architectures": ["Qwen3_5ForCausalLM"],
+        "hidden_size": 64,
+    } | extra
+    config_path = base / "config.json"
+    config_path.write_text(json.dumps(original), encoding="utf-8")
+    (base / "model.safetensors").write_bytes(b"fixture weights")
+    (adapter / "adapter_config.json").write_text(
+        '{"peft_type": "LORA"}', encoding="utf-8"
+    )
+    (adapter / "adapter_model.safetensors").write_bytes(b"adapter")
+    tools = Toolchain(Path("unused"), Path("convert_lora.py"), Path("unused"), tmp_path)
+
+    def runner(argv, **kwargs):
+        converter_base = Path(argv[argv.index("--base") + 1])
+        prepared = json.loads(
+            (converter_base / "config.json").read_text(encoding="utf-8")
+        )
+        assert prepared == original | {"architectures": [expected_architecture]}
+        if expected_architecture == "Qwen3_5TextModel":
+            assert converter_base != base
+            assert list(converter_base.iterdir()) == [converter_base / "config.json"]
+        else:
+            assert converter_base == base
+        Path(argv[argv.index("--outfile") + 1]).write_bytes(b"GGUF")
+
+    out = export(
+        "gguf-lora",
+        base,
+        adapter,
+        tmp_path / "lora.gguf",
+        fake_platform(tmp_path),
+        tools=tools,
+        runner=runner,
+    )
+
+    assert out.read_bytes() == b"GGUF"
+    assert json.loads(config_path.read_text(encoding="utf-8")) == original
+    assert not list(tmp_path.glob(".export-*"))
+
+
 def test_real_peft_merge_matches_adapter_model(tmp_path, writable_file_fsync):
     torch = pytest.importorskip("torch")
     from transformers import AutoModelForCausalLM
