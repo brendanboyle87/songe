@@ -9,9 +9,9 @@ parsed.
 - parses: made-up Python and JSON files parse
 - not_copy: no function names or request wording shared with the real
   session it came from (a shared file name alone is not a copy)
-- matters: shown the scene and two lessons, its own and one from another
-  session, the model picks its own. Asked about a single lesson, the model
-  said yes to every scene; the forced choice is what made the check informative.
+- matters: shown the scene, its own lesson and a distinct lesson from
+  another session, the model picks its own. Asked about a single lesson,
+  the model said yes to every scene.
 
 Drop codes are the first failed check, in this order (docs/CONTRACTS.md).
 """
@@ -129,9 +129,12 @@ def copy_evidence(scene, files, requests, code):
 
 
 def placebo_for(practice_id, signal, lessons):
-    """A lesson from another session, picked the same way every time, and
-    whether the real lesson is shown first."""
-    others = sorted({lesson for session, lesson in lessons if session != signal["session"]})
+    """A deterministic, distinct lesson from another session and the prompt order."""
+    real = signal["lesson"].strip()
+    others = sorted({
+        text for session, lesson in lessons
+        if session != signal["session"] and (text := lesson.strip()) and text != real
+    })
     h = int(hashlib.sha256(practice_id.encode()).hexdigest(), 16)
     return (others[h % len(others)] if others else None), h % 2 == 0
 

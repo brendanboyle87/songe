@@ -6,6 +6,7 @@ import copy
 import json
 
 from songe.practice import store as practice
+from songe.practice.checks import placebo_for
 from songe.reading import store as reading
 from songe.reading import timeline
 from tests.test_reading import SCENE, FakeReader, args, record_session
@@ -88,6 +89,35 @@ def test_the_forced_choice_drops_scenes_about_something_else(store):
     row = next(r for r in practice.practice(store) if r["signal"]["lesson"].startswith("Check"))
     assert row["checks"]["matters"] is False and row["drop"] == "matters"
     assert row["why"]["matters_answer"] == "neither"
+
+
+def test_a_repeated_lesson_from_another_session_cannot_be_its_own_placebo(store):
+    record_session(store)
+    asyncio.run(reading.read(store, FakeReader()))
+    original = next(s for s in reading.signals(store) if s.get("lesson"))
+    duplicate = {"id": "other", "session": "s2", "type": "correction", "lesson": original["lesson"]}
+    with store.connect() as db:
+        db.execute(
+            "INSERT INTO signals VALUES ('other','',?,1,?,NULL)",
+            ("s2", json.dumps(duplicate)),
+        )
+
+    writer = Writer(pick="neither")
+    asyncio.run(practice.write(store, writer, 1))
+
+    (row,) = practice.practice(store)
+    assert writer.asked == ["dream"]
+    assert row["checks"]["matters"] is None and row["drop"] is None
+
+
+def test_placebo_selection_uses_a_distinct_lesson_when_available():
+    signal = {"session": "s1", "lesson": "Use uv for tests."}
+    expected = "Use Conventional Commits."
+    lessons = [("s2", "  Use uv for tests.  "), ("s3", expected)]
+
+    placebo, _ = placebo_for("scene", signal, lessons)
+
+    assert placebo == expected
 
 
 def test_scenes_are_written_up_to_the_target_and_go_with_their_signal(store):
