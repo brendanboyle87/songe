@@ -255,6 +255,9 @@ def test_lora_export_uses_text_only_qwen35_config(
         "model_type": model_type,
         "architectures": ["Qwen3_5ForCausalLM"],
         "hidden_size": 64,
+        "linear_num_key_heads": 16,
+        "linear_num_value_heads": 48,
+        "num_hidden_layers": 64,
     } | extra
     config_path = base / "config.json"
     config_path.write_text(json.dumps(original), encoding="utf-8")
@@ -270,12 +273,14 @@ def test_lora_export_uses_text_only_qwen35_config(
         prepared = json.loads(
             (converter_base / "config.json").read_text(encoding="utf-8")
         )
-        assert prepared == original | {"architectures": [expected_architecture]}
+        expected = original | {"architectures": [expected_architecture]}
         if expected_architecture == "Qwen3_5TextModel":
+            expected["model_type"] = "qwen3_5_text"
             assert converter_base != base
             assert list(converter_base.iterdir()) == [converter_base / "config.json"]
         else:
             assert converter_base == base
+        assert prepared == expected
         Path(argv[argv.index("--outfile") + 1]).write_bytes(b"GGUF")
 
     out = export(

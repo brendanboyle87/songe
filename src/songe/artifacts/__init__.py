@@ -42,6 +42,9 @@ def _lora_base(base, staging):
     prepared = staging / "base"
     prepared.mkdir()
     config["architectures"] = ["Qwen3_5TextModel"]
+    # AutoConfig otherwise creates a nested text_config whose defaults the
+    # converter prefers over the original flat dimensions.
+    config["model_type"] = "qwen3_5_text"
     (prepared / "config.json").write_text(json.dumps(config), encoding="utf-8")
     return prepared
 
