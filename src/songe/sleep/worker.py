@@ -12,7 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 from statistics import mean
 
-from ..artifacts.storage import StorageWait, artifact_roots
+from ..artifacts.storage import StorageWait, admit_storage, artifact_roots
 from ..backends import Interrupted, choose
 from ..config import Config, data_dir
 from ..log import Store
@@ -261,18 +261,15 @@ def run(config, store, slice_seconds=None, sizing=None, *, export_only=False):
         if power_status(power_platform).constrained(expected_seconds):
             raise Interrupted("battery low")
         if pending := pending_export(config, store):
-            from ..artifacts.storage import swap_space
-
             night, record = pending["id"], pending["record"]
             reason_key = "export_wait"
             work = Path(record["work"])
             candidate = record["pending_export"]
             adapter = Path(candidate["training_adapter"])
-            if wait := swap_space(power_platform):
-                raise StorageWait(wait)
             if not adapter.is_dir():
                 raise StorageWait(f"Saved adapter is unavailable: {adapter}")
             verify_work(work, store, night)
+            admit_storage(config, store, power_platform, pending_export=candidate)
             journal = Journal(work, check, store, slice_id)
             journal.phase = "fuse"
             platform = Rooted(TrainingPlatform(power_platform, config), store.root)
@@ -287,7 +284,6 @@ def run(config, store, slice_seconds=None, sizing=None, *, export_only=False):
             del result["pending_export"]
             result.pop("export_wait", None)
             store.night(night, status="ready", phase="swap", progress=0.95, record=result)
-            store.set("disk_wait", None)
             print(json.dumps(result), flush=True)
             return result
         if export_only:
@@ -382,7 +378,6 @@ def run(config, store, slice_seconds=None, sizing=None, *, export_only=False):
             )
         kind = candidate_kind(config, platform)
         from ..artifacts.storage import (
-            admit_storage,
             artifact_root,
             volume,
         )

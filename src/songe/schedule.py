@@ -942,7 +942,8 @@ class Scheduler:
         calibration = self.store.get("calibration") or {}
         from .sleep.calibration_state import needs_growth
 
-        exporting = bool(await asyncio.to_thread(pending_export, self.config, self.store))
+        pending = await asyncio.to_thread(pending_export, self.config, self.store)
+        exporting = pending is not None
         # Also when a pressed Deep Dream's training run found it needed
         # growth (see ModelScheduler.finish): measure, then train.
         # Off the event loop: the proxy and the status API answer meanwhile.
@@ -1005,14 +1006,14 @@ class Scheduler:
         revision = self.traffic_revision
         try:
             await asyncio.to_thread(collect_idle_scratch, self.store)
-            if not exporting:
-                await asyncio.to_thread(
-                    admit_storage,
-                    self.config,
-                    self.store,
-                    self.platform,
-                    calibration=upgrade_calibration,
-                )
+            await asyncio.to_thread(
+                admit_storage,
+                self.config,
+                self.store,
+                self.platform,
+                calibration=upgrade_calibration,
+                pending_export=pending["record"]["pending_export"] if pending else None,
+            )
         except StorageWait as exc:
             self.reason = str(exc)
             return
