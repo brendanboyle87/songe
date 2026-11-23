@@ -111,6 +111,61 @@ async def test_proxy_restart_recovers_incomplete_night(config, store):
     assert store.nights()[0]["status"] == "interrupted"
 
 
+async def test_pending_adapter_export_starts_without_training_capacity(
+    config, store, monkeypatch
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    from songe import schedule
+    from songe.config import training_fingerprint
+    from songe.memory import Snapshot
+    from songe.sleep import sizing
+
+    config.upstream = "llamacpp"
+    config.calibrated_peak_gb = 90
+    config.calibration_available = True
+    store.set("growth_requested", True)
+    store.night(
+        None,
+        status="interrupted",
+        phase="fuse",
+        record={
+            "configuration": training_fingerprint(config),
+            "base_fingerprint": schedule.base_fingerprint(config),
+            "generation": store.get("candidate_generation"),
+            "pending_export": {"kind": "gguf-lora"},
+        },
+    )
+    sample = Snapshot(24 * 10**9, 4 * 10**9)
+    platform = SimpleNamespace(name="darwin", keep_awake=lambda pid: None)
+    scheduler = Scheduler(config, store, SimpleNamespace(), platform)
+    scheduler.last_traffic -= 3600
+    monkeypatch.setattr(schedule, "probe", lambda platform: replace(good(), free_gb=4))
+    monkeypatch.setattr(schedule, "snapshot", lambda platform: sample)
+    monkeypatch.setattr(
+        sizing, "choose_size", lambda *args: pytest.fail("sized a training worker")
+    )
+
+    def baseline(*args, required_bytes, required_device_bytes, **kwargs):
+        assert (required_bytes, required_device_bytes) == (0, 0)
+        return sample
+
+    monkeypatch.setattr(schedule, "capture_baseline", baseline)
+    monkeypatch.setattr(schedule, "guard", lambda *args, **kwargs: None)
+
+    async def spawn(*argv, **kwargs):
+        assert "songe.sleep.worker" in argv
+        assert "--export-only" in argv
+        assert "--sizing" not in argv
+        return SimpleNamespace(pid=1, returncode=None)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    await scheduler.tick()
+    assert scheduler.process
+    await scheduler.guard_task
+
+
 async def test_ready_swap_waits_for_inflight_and_observed_duration(
     config, store, monkeypatch
 ):
