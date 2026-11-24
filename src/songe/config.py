@@ -157,6 +157,11 @@ class Config:
 
     @classmethod
     def load(cls, root: Path | None = None):
+        return cls.load_with_keys(root)[0]
+
+    @classmethod
+    def load_with_keys(cls, root: Path | None = None):
+        """Resolve installation settings and return the keys used after migration."""
         path = data_dir(root) / "config.toml"
         data = tomllib.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         # Retired in schema v2; older installations may still have saved it.
@@ -235,7 +240,7 @@ class Config:
                 data["wake_scales"] = cls.wake_scales
         config = cls(**data)
         config.validate()
-        return config
+        return config, frozenset(data)
 
     @classmethod
     def for_model(cls, root, model):

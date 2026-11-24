@@ -150,6 +150,7 @@ once, and trains on what fits. See [DESIGN.md](DESIGN.md).
 | Command | What it does |
 | --- | --- |
 | `songe` | what it is doing |
+| `songe status --training [MODEL]` | resolved Deep Dream settings and where they come from |
 | `songe open` | the dashboard in your browser |
 | `songe models` | each model, and whether it dreams on its own |
 | `songe models MODEL on\|off` | auto-dream for one model |

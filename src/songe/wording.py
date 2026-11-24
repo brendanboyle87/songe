@@ -4,6 +4,9 @@ import math
 import re
 from datetime import datetime
 
+TRAINING_SETTINGS = "Training settings"
+IGNORED_MODEL_SETTINGS = "Ignored per-model settings"
+
 
 def readable(value):
     text = str(value or "")
