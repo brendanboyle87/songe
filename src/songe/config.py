@@ -1,5 +1,6 @@
 import json
 import tomllib
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from urllib.parse import urlparse
@@ -398,6 +399,23 @@ TRAINING_KEYS = (
     "min_heldout", "min_drift", "general_drift_limit", "gate_confidence",
     "repetition_ngram", "wake_scales",
 )
+
+
+def training_setting_sources(installation_keys, model_keys):
+    return (
+        dict.fromkeys(TRAINING_KEYS, "default")
+        | dict.fromkeys(installation_keys, "installation")
+        | dict.fromkeys(model_keys, "per-model")
+    )
+
+
+def training_settings_snapshot(config, sources=None):
+    """Capture the resolved policy and its origin when loaded from disk."""
+    sources = sources or {}
+    return {
+        key: {"value": deepcopy(getattr(config, key)), "source": sources.get(key)}
+        for key in TRAINING_KEYS
+    }
 
 
 def training_fingerprint(config):

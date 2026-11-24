@@ -495,6 +495,10 @@ status lines.
   the summary shape.
 - `GET /api/cycles/<cycle id>` returns one full cycle record: every signal,
   every practice line, every example, all losses and checks.
+- `GET /api/nights/<night id>` includes `record.training_settings` for new
+  runs. It captures the resolved training policy and each setting's source at
+  cycle start. Resumed slices retain this snapshot and record their adaptive
+  sizing in `record.slice_sizes`.
 
 ```jsonc
 // ModelLearning

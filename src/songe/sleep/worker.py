@@ -14,7 +14,13 @@ from statistics import mean
 
 from ..artifacts.storage import StorageWait, admit_storage, artifact_roots
 from ..backends import Interrupted, choose
-from ..config import Config, data_dir
+from ..config import (
+    Config,
+    data_dir,
+    training_fingerprint,
+    training_setting_sources,
+    training_settings_snapshot,
+)
 from ..log import Store
 from ..platform import Rooted, current, power_status
 from ..platform.locking import acquire
@@ -165,7 +171,15 @@ def verify_work(work, store, night):
         raise StorageWait(f"Learning work is unavailable or no longer owned: {work}")
 
 
-def run(config, store, slice_seconds=None, sizing=None, *, export_only=False):
+def run(
+    config,
+    store,
+    slice_seconds=None,
+    sizing=None,
+    *,
+    export_only=False,
+    setting_sources=None,
+):
     from ..memory import TrainingPlatform
     from ..practice.pool import drift_steps
     from .evaluate import evaluate, references
@@ -320,8 +334,6 @@ def run(config, store, slice_seconds=None, sizing=None, *, export_only=False):
                 return info | {
                     "reason": "Waiting for memory: intact training samples deferred"
                 }
-        from ..config import training_fingerprint
-
         fingerprint = training_fingerprint(config)
         base = base_fingerprint(config)
         rebuild_attempt_key = rebuild_key(config, store)
@@ -394,23 +406,15 @@ def run(config, store, slice_seconds=None, sizing=None, *, export_only=False):
                 # Retire it; its selected experience remains in the durable pool.
                 store.night(resumable["id"], status="discarded")
                 resumable = None
-        night = resumable["id"] if resumable else store.night(None)
-        record = resumable["record"] if resumable else {}
-        work = (
-            Path(record["work"])
-            if record.get("work")
-            else target / "versions" / f"night-{night}"
-        )
-        owned = {"night": night, "installation_id": store.get("installation_id")}
-        verify_work(work, store, night)
-        private_dir(work)
-        write_json(work / "songe_work.json", owned)
-        record = (
-            resumable["record"]
-            if resumable
-            else {
+        if resumable:
+            night, record = resumable["id"], resumable["record"]
+        else:
+            record = {
                 "expected": store.get("current"),
                 "configuration": fingerprint,
+                "training_settings": training_settings_snapshot(
+                    policy_config, setting_sources
+                ),
                 "base_fingerprint": base,
                 "environment": store.get("environment_fingerprint"),
                 "generation": store.get("candidate_generation"),
@@ -423,7 +427,16 @@ def run(config, store, slice_seconds=None, sizing=None, *, export_only=False):
                 "trigger": "dream" if store.get("requested_sleep", False) else "idle",
                 "started_at": time.time(),
             }
+            night = store.night(None, record=record)
+        work = (
+            Path(record["work"])
+            if record.get("work")
+            else target / "versions" / f"night-{night}"
         )
+        owned = {"night": night, "installation_id": store.get("installation_id")}
+        verify_work(work, store, night)
+        private_dir(work)
+        write_json(work / "songe_work.json", owned)
         record["work"] = str(work)
         store.night(night, status="running", record=record)
         if sizing:
@@ -1478,9 +1491,12 @@ def main():
     parser.add_argument("--export-only", action="store_true")
     parser.add_argument("--model-key")
     args = parser.parse_args()
-    config, store = Config.load(args.data_dir), Store(args.data_dir)
+    config, installation_keys = Config.load_with_keys(args.data_dir)
+    store, model_keys = Store(args.data_dir), ()
     if args.model_key:
-        config = Config.for_model(args.data_dir, args.model_key)
+        from ..models.registry import model_config_with_keys
+
+        config, model_keys, _ = model_config_with_keys(config, store, args.model_key)
         store = store.scoped(args.model_key)
     from ..telemetry import configure
 
@@ -1496,7 +1512,12 @@ def main():
         )
     elif args.child:
         outcome = run(
-            config, store, args.slice_seconds, args.sizing, export_only=args.export_only
+            config,
+            store,
+            args.slice_seconds,
+            args.sizing,
+            export_only=args.export_only,
+            setting_sources=training_setting_sources(installation_keys, model_keys),
         )
         # Why a run ended (also one that never started a night): the
         # service reads it to carry a pressed Deep Dream on, or say why not.

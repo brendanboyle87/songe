@@ -1169,7 +1169,7 @@ def print_status(data):
 
 def print_training_status(root, model):
     from .api import ReadOnlyStore
-    from .config import TRAINING_KEYS
+    from .config import training_setting_sources, training_settings_snapshot
     from .models.registry import entries, model_config_with_keys
     from .terminal import training_settings
 
@@ -1184,14 +1184,12 @@ def print_training_status(root, model):
     elif model:
         raise ValueError(f"Unknown model: {model}")
 
-    sources = (
-        dict.fromkeys(TRAINING_KEYS, "default")
-        | dict.fromkeys(installation_keys, "installation")
-        | dict.fromkeys(model_keys, "per-model")
+    settings = training_settings_snapshot(
+        config, training_setting_sources(installation_keys, model_keys)
     )
     training_settings(
         config.public_model if config.model_key or config.model else None,
-        ((key, getattr(config, key), sources[key]) for key in TRAINING_KEYS),
+        ((key, setting["value"], setting["source"]) for key, setting in settings.items()),
         ignored,
     )
 
