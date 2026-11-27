@@ -129,23 +129,25 @@ class LlamaServer:
                 with contextlib.suppress(psutil.NoSuchProcess):
                     children = psutil.Process(process.pid).children(recursive=True)
 
-            async def released():
+            async def released(timeout=None):
                 await process.wait()
                 # The process-group wrapper can exit before llama-server
                 # releases its Metal allocations. Remember the server before
                 # termination reparents it and wait for it as well.
                 if children:
                     _, alive = await asyncio.to_thread(
-                        psutil.wait_procs, children, timeout=grace
+                        psutil.wait_procs, children, timeout=timeout
                     )
                     if alive:
                         raise TimeoutError("llama.cpp is still releasing its model")
 
             terminate(process)
             try:
-                await asyncio.wait_for(released(), grace)
+                await asyncio.wait_for(released(timeout=grace), grace)
             except TimeoutError:
                 kill(process)
+                # After escalation, the owned server can need longer to
+                # release its allocations.
                 await released()
         self.finished.set()
         if self.watcher:
