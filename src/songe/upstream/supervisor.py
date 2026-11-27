@@ -120,14 +120,33 @@ class LlamaServer:
         if self.process is None:
             return
         if self.process.returncode is None:
-            terminate(self.process)
+            import psutil
+
+            process = self.process
+            grace = self.config.guard_grace_seconds
+            children = []
+            if self.platform.name == "darwin" and self.config.upstream == "llamacpp":
+                with contextlib.suppress(psutil.NoSuchProcess):
+                    children = psutil.Process(process.pid).children(recursive=True)
+
+            async def released():
+                await process.wait()
+                # The process-group wrapper can exit before llama-server
+                # releases its Metal allocations. Remember the server before
+                # termination reparents it and wait for it as well.
+                if children:
+                    _, alive = await asyncio.to_thread(
+                        psutil.wait_procs, children, timeout=grace
+                    )
+                    if alive:
+                        raise TimeoutError("llama.cpp is still releasing its model")
+
+            terminate(process)
             try:
-                await asyncio.wait_for(
-                    self.process.wait(), self.config.guard_grace_seconds
-                )
+                await asyncio.wait_for(released(), grace)
             except TimeoutError:
-                kill(self.process)
-                await self.process.wait()
+                kill(process)
+                await released()
         self.finished.set()
         if self.watcher:
             await self.watcher

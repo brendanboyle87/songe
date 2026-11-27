@@ -111,6 +111,84 @@ async def test_proxy_restart_recovers_incomplete_night(config, store):
     assert store.nights()[0]["status"] == "interrupted"
 
 
+@pytest.mark.parametrize("memory_released", [True, False])
+async def test_llama_parking_rechecks_memory_on_macos(
+    config, store, monkeypatch, memory_released
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from songe import schedule
+    from songe.artifacts import storage
+    from songe.memory import Snapshot
+    from songe.sleep import calibration_state, sizing
+
+    gb = 10**9
+    busy, free = Snapshot(128 * gb, 66 * gb), Snapshot(128 * gb, 96 * gb)
+    parked = False
+    measurements = []
+
+    async def park(on_snapshot):
+        nonlocal parked
+        parked = True
+        on_snapshot([])
+
+    def snapshot(_platform):
+        if not parked:
+            return busy
+        sample = free if memory_released and measurements else busy
+        measurements.append(sample)
+        return sample
+
+    def fit(_config, _calibration, sample, _history):
+        if sample.available < 91 * gb:
+            return None
+        return {
+            "max_sequence": config.max_sequence,
+            "host_bytes": 77 * gb,
+            "device_bytes": 0,
+            "prediction_error_bytes": 0,
+            "device_prediction_error_bytes": 0,
+        }
+
+    config.upstream = "llamacpp"
+    config.server_owned = True
+    config.calibration_available = True
+    config.guard_min_interval = 0.001
+    config.guard_grace_seconds = 1 if memory_released else 0.02
+    store.set("calibration", {"rows": [{"sequence": 256, "host_peak_bytes": 77 * gb}]})
+    store.set("requested_sleep", True)
+    platform = SimpleNamespace(name="darwin", keep_awake=lambda _pid: None)
+    upstream = SimpleNamespace(park=park, loaded_bytes=AsyncMock(return_value=30 * gb))
+    scheduler = Scheduler(config, store, upstream, platform)
+    monkeypatch.setattr(scheduler, "enough", AsyncMock(return_value=True))
+    restore = AsyncMock()
+    monkeypatch.setattr(scheduler, "restore", restore)
+    spawn = AsyncMock(return_value=SimpleNamespace(pid=1, returncode=None))
+    monkeypatch.setattr(schedule.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(schedule, "probe", lambda _platform: good())
+    monkeypatch.setattr(schedule, "snapshot", snapshot)
+    monkeypatch.setattr(schedule, "capture_baseline", lambda *args, **kwargs: free)
+    monkeypatch.setattr(schedule, "guard", lambda *args, **kwargs: None)
+    monkeypatch.setattr(calibration_state, "needs_growth", lambda *args: False)
+    monkeypatch.setattr(sizing, "choose_size", fit)
+    monkeypatch.setattr(storage, "admit_storage", lambda *args, **kwargs: None)
+
+    await scheduler.tick()
+
+    assert measurements and measurements[0] == busy
+    if memory_released:
+        assert measurements == [busy, free]
+        spawn.assert_awaited_once()
+        restore.assert_not_awaited()
+        await scheduler.guard_task
+        scheduler.worker_err.close()
+    else:
+        spawn.assert_not_awaited()
+        restore.assert_awaited_once()
+        assert "Waiting for memory" in scheduler.reason
+
+
 async def test_pending_adapter_export_waits_for_disk_and_skips_training_sizing(
     config, store, monkeypatch
 ):

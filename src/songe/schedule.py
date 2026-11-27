@@ -1136,6 +1136,31 @@ class Scheduler:
                     if needs_sizing
                     else None
                 )
+                # Unified memory can be reported as occupied briefly after
+                # the serving process exits. Give the release time to show
+                # up before restoring a model that would consume it again.
+                if (
+                    unloads
+                    and needs_sizing
+                    and sizing is None
+                    and self.platform.name == "darwin"
+                    and self.config.upstream == "llamacpp"
+                    and self.config.server_owned
+                ):
+                    deadline = time.monotonic() + self.config.guard_grace_seconds
+                    while sizing is None and time.monotonic() < deadline:
+                        await asyncio.sleep(self.config.guard_min_interval)
+                        if (
+                            any(self.in_flight.values())
+                            or revision != self.traffic_revision
+                        ):
+                            await self.restore()
+                            return
+                        sample = await asyncio.to_thread(snapshot, training_platform)
+                        self.observe_memory(sample)
+                        sizing = choose_size(
+                            self.config, calibration, sample, self.pressure_history.data
+                        )
                 if needs_sizing and sizing is None:
                     needed = free_needed(
                         self.config, calibration, sample, self.pressure_history.data
